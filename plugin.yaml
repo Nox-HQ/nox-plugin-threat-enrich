@@ -1,0 +1,7 @@
+name: nox-plugin-threat-enrich
+version: 0.1.0
+track: intelligence
+description: Threat intelligence enrichment with CWE, OWASP Top 10, and MITRE ATT&CK metadata
+tools:
+  - name: scan
+    description: Scan source files and enrich findings with CWE, OWASP Top 10, and MITRE ATT&CK metadata
