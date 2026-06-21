@@ -24,6 +24,10 @@ type enrichRule struct {
 	Severity    pluginv1.Severity
 	ConfLevel   pluginv1.Confidence
 	Patterns    map[string]*regexp.Regexp // extension -> compiled regex
+	// Mitigations suppress a match on the same line when present — used to
+	// encode known-safe variants RE2 cannot express via negative lookahead
+	// (e.g. yaml.load with an explicit safe Loader=).
+	Mitigations map[string]*regexp.Regexp
 	// Enrichment metadata
 	CWE         string // CWE ID for ENRICH-001
 	OWASPTop10  string // OWASP Top 10 category for ENRICH-002
@@ -43,9 +47,15 @@ var rules = []enrichRule{
 		OWASPTop10:  "A03:2021-Injection",
 		ATTACKTech:  "",
 		Remediation: "Use parameterized queries or prepared statements instead of string concatenation",
+		// SQL injection: string-built SQL passed to a DB call. The go pattern
+		// requires a DB method (Query/Exec/...) with concatenation rather than
+		// a bare `query +`, which matched any variable named "query" (GraphQL
+		// strings, URL query builders). The py pattern requires the `%` format
+		// operator after a quote (`"..." % x`) — not a `%s` placeholder inside
+		// a parameterized `execute("... %s", (x,))` call, which is SAFE.
 		Patterns: map[string]*regexp.Regexp{
-			".go": regexp.MustCompile(`(?i)(fmt\.Sprintf\(.*SELECT|fmt\.Sprintf\(.*INSERT|fmt\.Sprintf\(.*UPDATE|fmt\.Sprintf\(.*DELETE|query\s*\+\s*|Exec\(.*\+)`),
-			".py": regexp.MustCompile(`(?i)(execute\(.*%|execute\(.*\.format|f".*SELECT|f".*INSERT|f".*UPDATE|f".*DELETE)`),
+			".go": regexp.MustCompile(`(?i)(fmt\.Sprintf\(.*(?:SELECT|INSERT|UPDATE|DELETE)|(?:Query|QueryRow|QueryContext|Exec|ExecContext)\(.*\+)`),
+			".py": regexp.MustCompile(`(?i)(execute\([^)]*["']\s*%|execute\(\s*f["']|execute\(.*\.format|f["'].*(?:SELECT|INSERT|UPDATE|DELETE))`),
 			".js": regexp.MustCompile(`(?i)(query\(.*\+|query\(` + "`" + `.*\$\{)`),
 			".ts": regexp.MustCompile(`(?i)(query\(.*\+|query\(` + "`" + `.*\$\{)`),
 		},
@@ -94,11 +104,14 @@ var rules = []enrichRule{
 		OWASPTop10:  "A01:2021-Broken Access Control",
 		ATTACKTech:  "",
 		Remediation: "Implement proper access control checks; deny by default; validate authorization on every request",
+		// Broken access control: forcing an admin flag on, or disabling auth.
+		// Dropped `role == "admin"` (a correct authorization CHECK, not a
+		// weakness) and the `= false` default-init variants, which were noise.
 		Patterns: map[string]*regexp.Regexp{
-			".go": regexp.MustCompile(`(?i)(isAdmin\s*:?=\s*(true|false)|role\s*==\s*"admin"|SkipAuth|bypassAuth|noAuth)`),
-			".py": regexp.MustCompile(`(?i)(is_admin\s*=\s*(True|False)|role\s*==\s*['"]admin['"]|skip_auth|bypass_auth|no_auth|@login_not_required)`),
-			".js": regexp.MustCompile(`(?i)(isAdmin\s*=\s*(true|false)|role\s*===?\s*['"]admin['"]|skipAuth|bypassAuth|noAuth)`),
-			".ts": regexp.MustCompile(`(?i)(isAdmin\s*=\s*(true|false)|role\s*===?\s*['"]admin['"]|skipAuth|bypassAuth|noAuth)`),
+			".go": regexp.MustCompile(`(?i)(isAdmin\s*:?=\s*true|SkipAuth|bypassAuth|noAuth)`),
+			".py": regexp.MustCompile(`(?i)(is_admin\s*=\s*True|skip_auth|bypass_auth|no_auth|@login_not_required)`),
+			".js": regexp.MustCompile(`(?i)(isAdmin\s*=\s*true|skipAuth|bypassAuth|noAuth)`),
+			".ts": regexp.MustCompile(`(?i)(isAdmin\s*=\s*true|skipAuth|bypassAuth|noAuth)`),
 		},
 	},
 	// ENRICH-002: OWASP Top 10 — Cryptographic Failures (A02)
@@ -128,11 +141,15 @@ var rules = []enrichRule{
 		OWASPTop10:  "A07:2021-Identification and Authentication Failures",
 		ATTACKTech:  "T1110",
 		Remediation: "Store credentials securely using vaults; never hardcode passwords or compare in plaintext",
+		// Credential access: comparison against (or assignment of) a NON-EMPTY
+		// string literal. Requiring a character inside the quotes excludes
+		// empty-string guards (`password == ""`, `credentials = ""`), which are
+		// not hardcoded-credential smells.
 		Patterns: map[string]*regexp.Regexp{
-			".go": regexp.MustCompile(`(?i)(password\s*==\s*"|password\s*!=\s*"|hardcoded.?password|plaintext.?password|credentials\s*=\s*")`),
-			".py": regexp.MustCompile(`(?i)(password\s*==\s*['"]|password\s*!=\s*['"]|hardcoded.?password|plaintext.?password|credentials\s*=\s*['"])`),
-			".js": regexp.MustCompile(`(?i)(password\s*===?\s*['"]|password\s*!==?\s*['"]|hardcoded.?password|plaintext.?password|credentials\s*=\s*['"])`),
-			".ts": regexp.MustCompile(`(?i)(password\s*===?\s*['"]|password\s*!==?\s*['"]|hardcoded.?password|plaintext.?password|credentials\s*=\s*['"])`),
+			".go": regexp.MustCompile(`(?i)(password\s*==\s*"[^"]|password\s*!=\s*"[^"]|hardcoded.?password|plaintext.?password|credentials\s*=\s*"[^"])`),
+			".py": regexp.MustCompile(`(?i)(password\s*==\s*['"][^'"]|password\s*!=\s*['"][^'"]|hardcoded.?password|plaintext.?password|credentials\s*=\s*['"][^'"])`),
+			".js": regexp.MustCompile(`(?i)(password\s*===?\s*['"][^'"]|password\s*!==?\s*['"][^'"]|hardcoded.?password|plaintext.?password|credentials\s*=\s*['"][^'"])`),
+			".ts": regexp.MustCompile(`(?i)(password\s*===?\s*['"][^'"]|password\s*!==?\s*['"][^'"]|hardcoded.?password|plaintext.?password|credentials\s*=\s*['"][^'"])`),
 		},
 	},
 	// ENRICH-003: ATT&CK — Discovery (T1083 File and Directory Discovery)
@@ -179,10 +196,20 @@ var rules = []enrichRule{
 		OWASPTop10:  "A08:2021-Software and Data Integrity Failures",
 		ATTACKTech:  "",
 		Remediation: "Avoid deserializing untrusted data; use safe serialization formats (JSON); validate and sanitize input before deserialization",
+		// Insecure deserialization: unsafe deserializers only. The previous py
+		// pattern `yaml\.load\([^)]*Loader` was INVERTED — it matched the SAFE
+		// form (yaml.load with an explicit Loader=) and missed the unsafe one.
+		// Now plain `yaml.load(` is flagged and the safe-Loader form suppressed
+		// via Mitigations. JSON.parse was removed: JSON is a safe format (the
+		// rule's own remediation recommends it), so `JSON.parse(req.body)` is
+		// not insecure deserialization.
 		Patterns: map[string]*regexp.Regexp{
-			".py": regexp.MustCompile(`(?i)(pickle\.loads?\(|yaml\.load\([^)]*Loader|marshal\.loads?\(|shelve\.open\()`),
-			".js": regexp.MustCompile(`(?i)(unserialize\(|deserialize\(|JSON\.parse\(.*req\.\w+)`),
-			".ts": regexp.MustCompile(`(?i)(unserialize\(|deserialize\(|JSON\.parse\(.*req\.\w+)`),
+			".py": regexp.MustCompile(`(?i)(pickle\.loads?\(|yaml\.unsafe_load\(|yaml\.load\(|marshal\.loads?\(|shelve\.open\()`),
+			".js": regexp.MustCompile(`(?i)(unserialize\(|deserialize\()`),
+			".ts": regexp.MustCompile(`(?i)(unserialize\(|deserialize\()`),
+		},
+		Mitigations: map[string]*regexp.Regexp{
+			".py": regexp.MustCompile(`(?i)Loader\s*=\s*(?:yaml\.)?(?:C?SafeLoader|C?BaseLoader)`),
 		},
 	},
 	// ENRICH-004: Common vulnerability pattern with remediation — Hardcoded Secrets
@@ -293,6 +320,10 @@ func scanFile(resp *sdk.ResponseBuilder, filePath, ext string) error {
 				continue
 			}
 			if pattern.MatchString(line) {
+				// Suppress when a known-safe variant is present on the line.
+				if m, ok := rule.Mitigations[ext]; ok && m.MatchString(line) {
+					continue
+				}
 				fb := resp.Finding(
 					rule.ID,
 					rule.Severity,

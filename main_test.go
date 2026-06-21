@@ -164,6 +164,22 @@ func TestScanMultiLanguage(t *testing.T) {
 	}
 }
 
+// TestCleanCodeNoFindings is the false-positive guard: idiomatic safe code —
+// parameterized queries, authorization checks (role == "admin"), default-false
+// flags, empty-password guards, env-sourced secrets, JSON.parse of request
+// bodies, and yaml.load with a safe Loader — must produce zero findings.
+func TestCleanCodeNoFindings(t *testing.T) {
+	client := testClient(t)
+	resp := invokeScan(t, client, filepath.Join(testdataDir(t), "clean"))
+
+	for _, f := range resp.GetFindings() {
+		t.Errorf("unexpected false positive %s at line %d — %s",
+			f.GetRuleId(),
+			f.GetLocation().GetStartLine(),
+			f.GetMessage())
+	}
+}
+
 func TestScanEmptyWorkspace(t *testing.T) {
 	client := testClient(t)
 	resp := invokeScan(t, client, t.TempDir())
