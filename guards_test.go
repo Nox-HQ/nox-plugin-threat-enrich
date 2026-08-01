@@ -23,12 +23,12 @@ func TestIsPlaceholderSecret(t *testing.T) {
 	}
 
 	// The guard must not swallow a credential that merely looks structured.
-	real := []string{
+	credentials := []string{
 		`api_key = "AKIAIOSFODNN7REALKEY"`,
 		`secret_key = "8f14e45fceea167a5a36dedd4bea2543"`,
 		`private_key = "-----BEGIN RSA PRIVATE KEY-----"`,
 	}
-	for _, line := range real {
+	for _, line := range credentials {
 		if isPlaceholderSecret(line) {
 			t.Errorf("a plausible credential was suppressed: %s", line)
 		}
