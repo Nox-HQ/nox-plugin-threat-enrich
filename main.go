@@ -324,6 +324,17 @@ func scanFile(resp *sdk.ResponseBuilder, filePath, ext string) error {
 				if m, ok := rule.Mitigations[ext]; ok && m.MatchString(line) {
 					continue
 				}
+				// Prose about a dangerous call is not a dangerous call. Applied
+				// only to the code-construct rules: a credential inside a
+				// comment is still a leaked credential, so ENRICH-004 keeps
+				// firing there.
+				if rule.ID != "ENRICH-004" && isCommentLine(line, ext) {
+					continue
+				}
+				// A documentation default is not a credential.
+				if rule.ID == "ENRICH-004" && isPlaceholderSecret(line) {
+					continue
+				}
 				fb := resp.Finding(
 					rule.ID,
 					rule.Severity,
