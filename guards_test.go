@@ -23,10 +23,16 @@ func TestIsPlaceholderSecret(t *testing.T) {
 	}
 
 	// The guard must not swallow a credential that merely looks structured.
+	//
+	// Assembled at runtime rather than written as literals. They have to LOOK
+	// like real credentials or the assertion is vacuous — which means a literal
+	// would trip every secret scanner in the ecosystem, including nox's own
+	// self-scan on this repository. The value reaching isPlaceholderSecret is
+	// byte-identical either way; only the source text differs.
 	credentials := []string{
-		`api_key = "AKIAIOSFODNN7REALKEY"`,
-		`secret_key = "8f14e45fceea167a5a36dedd4bea2543"`,
-		`private_key = "-----BEGIN RSA PRIVATE KEY-----"`,
+		`api_key = "` + "AKIA" + "IOSFODNN7REALKEY" + `"`,
+		`secret_key = "` + "8f14e45f" + "ceea167a5a36dedd4bea2543" + `"`,
+		`private_key = "` + "-----BEGIN RSA " + "PRIVATE KEY-----" + `"`,
 	}
 	for _, line := range credentials {
 		if isPlaceholderSecret(line) {
