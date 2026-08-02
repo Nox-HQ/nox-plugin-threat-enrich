@@ -63,7 +63,7 @@ func handleEnrich(ctx context.Context, req sdk.ToolRequest) (*pluginv1.InvokeToo
 		}
 
 		eb := resp.Enrichment(f.GetFingerprint(), "threat-intel", fmt.Sprintf("%s: %s", cwe, info.Name)).
-			Body(intelBody(cwe, info)).
+			Body(intelBody(cwe, &info)).
 			WithMetadata("cwe", cwe).
 			WithMetadata("weakness", info.Name).
 			WithMetadata("remediation", info.Remediation).
@@ -88,7 +88,7 @@ func handleEnrich(ctx context.Context, req sdk.ToolRequest) (*pluginv1.InvokeToo
 	return resp.Build(), nil
 }
 
-func intelBody(cwe string, info intel) string {
+func intelBody(cwe string, info *intel) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "**%s — %s**\n\n", cwe, info.Name)
 	if info.OWASP != "" {
