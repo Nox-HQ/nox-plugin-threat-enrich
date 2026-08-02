@@ -3,8 +3,7 @@ package main
 import (
 	"context"
 	"net"
-	"path/filepath"
-	"runtime"
+	"strings"
 	"testing"
 
 	pluginv1 "github.com/nox-hq/nox/gen/nox/plugin/v1"
@@ -13,7 +12,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestConformance(t *testing.T) {
@@ -21,218 +19,161 @@ func TestConformance(t *testing.T) {
 }
 
 func TestTrackConformance(t *testing.T) {
-	sdk.RunForTrack(t, buildServer(), registry.TrackIntelligence)
+	sdk.RunForTrack(t, buildServer(), registry.TrackAgentAssistance)
 }
 
-func TestScanFindsCWEPatterns(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, testdataDir(t))
-
-	found := findByRule(resp.GetFindings(), "ENRICH-001")
-	if len(found) == 0 {
-		t.Fatal("expected at least one ENRICH-001 (CWE-categorizable) finding")
-	}
-
-	hasCWE := false
-	for _, f := range found {
-		if f.GetSeverity() != sdk.SeverityHigh {
-			t.Errorf("ENRICH-001 severity should be HIGH, got %v", f.GetSeverity())
-		}
-		if f.GetConfidence() != sdk.ConfidenceHigh {
-			t.Errorf("ENRICH-001 confidence should be HIGH, got %v", f.GetConfidence())
-		}
-		if cwe, ok := f.GetMetadata()["cwe"]; ok && cwe != "" {
-			hasCWE = true
-		}
-		if f.GetLocation() == nil {
-			t.Error("finding must include a location")
-		}
-	}
-	if !hasCWE {
-		t.Error("ENRICH-001 findings must include CWE metadata")
-	}
-}
-
-func TestScanFindsOWASPPatterns(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, testdataDir(t))
-
-	found := findByRule(resp.GetFindings(), "ENRICH-002")
-	if len(found) == 0 {
-		t.Fatal("expected at least one ENRICH-002 (OWASP Top 10) finding")
-	}
-
-	hasOWASP := false
-	for _, f := range found {
-		if f.GetSeverity() != sdk.SeverityMedium {
-			t.Errorf("ENRICH-002 severity should be MEDIUM, got %v", f.GetSeverity())
-		}
-		if owasp, ok := f.GetMetadata()["owasp_top10"]; ok && owasp != "" {
-			hasOWASP = true
-		}
-	}
-	if !hasOWASP {
-		t.Error("ENRICH-002 findings must include owasp_top10 metadata")
-	}
-}
-
-func TestScanFindsATTACKPatterns(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, testdataDir(t))
-
-	found := findByRule(resp.GetFindings(), "ENRICH-003")
-	if len(found) == 0 {
-		t.Fatal("expected at least one ENRICH-003 (ATT&CK-mappable) finding")
-	}
-
-	hasATTACK := false
-	for _, f := range found {
-		if f.GetSeverity() != sdk.SeverityMedium {
-			t.Errorf("ENRICH-003 severity should be MEDIUM, got %v", f.GetSeverity())
-		}
-		if f.GetConfidence() != sdk.ConfidenceHigh {
-			t.Errorf("ENRICH-003 confidence should be HIGH, got %v", f.GetConfidence())
-		}
-		if attack, ok := f.GetMetadata()["mitre_attack"]; ok && attack != "" {
-			hasATTACK = true
-		}
-	}
-	if !hasATTACK {
-		t.Error("ENRICH-003 findings must include mitre_attack metadata")
-	}
-}
-
-func TestScanFindsCommonVulnPatterns(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, testdataDir(t))
-
-	found := findByRule(resp.GetFindings(), "ENRICH-004")
-	if len(found) == 0 {
-		t.Fatal("expected at least one ENRICH-004 (common vulnerability pattern) finding")
-	}
-
-	hasRemediation := false
-	for _, f := range found {
-		if f.GetSeverity() != sdk.SeverityLow {
-			t.Errorf("ENRICH-004 severity should be LOW, got %v", f.GetSeverity())
-		}
-		if f.GetConfidence() != sdk.ConfidenceMedium {
-			t.Errorf("ENRICH-004 confidence should be MEDIUM, got %v", f.GetConfidence())
-		}
-		if rem, ok := f.GetMetadata()["remediation"]; ok && rem != "" {
-			hasRemediation = true
-		}
-	}
-	if !hasRemediation {
-		t.Error("ENRICH-004 findings must include remediation metadata")
-	}
-}
-
-func TestScanEnrichmentMetadataComplete(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, testdataDir(t))
-
-	for _, f := range resp.GetFindings() {
-		meta := f.GetMetadata()
-		if _, ok := meta["language"]; !ok {
-			t.Errorf("finding %s must include language metadata", f.GetRuleId())
-		}
-		// All findings should have at least CWE or remediation.
-		hasCWE := meta["cwe"] != ""
-		hasRemediation := meta["remediation"] != ""
-		if !hasCWE && !hasRemediation {
-			t.Errorf("finding %s should include cwe or remediation metadata", f.GetRuleId())
-		}
-	}
-}
-
-func TestScanMultiLanguage(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, testdataDir(t))
-
-	languages := make(map[string]bool)
-	for _, f := range resp.GetFindings() {
-		if lang, ok := f.GetMetadata()["language"]; ok {
-			languages[lang] = true
-		}
-	}
-
-	for _, lang := range []string{"go", "python", "javascript", "typescript"} {
-		if !languages[lang] {
-			t.Errorf("expected findings for language %q", lang)
-		}
-	}
-}
-
-// TestCleanCodeNoFindings is the false-positive guard: idiomatic safe code —
-// parameterized queries, authorization checks (role == "admin"), default-false
-// flags, empty-password guards, env-sourced secrets, JSON.parse of request
-// bodies, and yaml.load with a safe Loader — must produce zero findings.
-func TestCleanCodeNoFindings(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, filepath.Join(testdataDir(t), "clean"))
-
-	for _, f := range resp.GetFindings() {
-		t.Errorf("unexpected false positive %s at line %d — %s",
-			f.GetRuleId(),
-			f.GetLocation().GetStartLine(),
-			f.GetMessage())
-	}
-}
-
-func TestScanEmptyWorkspace(t *testing.T) {
-	client := testClient(t)
-	resp := invokeScan(t, client, t.TempDir())
-
-	if len(resp.GetFindings()) != 0 {
-		t.Errorf("expected zero findings for empty workspace, got %d", len(resp.GetFindings()))
-	}
-}
-
-func TestScanNoWorkspace(t *testing.T) {
-	client := testClient(t)
-
-	input, err := structpb.NewStruct(map[string]any{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resp, err := client.InvokeTool(context.Background(), &pluginv1.InvokeToolRequest{
-		ToolName: "scan",
-		Input:    input,
+// The contract: enrich core's findings, do not manufacture findings to enrich.
+// The old shape re-detected vulnerabilities purely so it had something of its
+// own to attach metadata to, which left core's real findings un-enriched — the
+// one job the plugin existed to do.
+func TestEnrich_AnnotatesCoreFindingsAndEmitsNoFindings(t *testing.T) {
+	resp := invokeEnrich(t, testClient(t), []*pluginv1.Finding{
+		findingWithCWE("f1", "CWE-89"),
+		findingWithCWE("f2", "CWE-798"),
 	})
-	if err != nil {
-		t.Fatalf("InvokeTool: %v", err)
+
+	if got := len(resp.GetFindings()); got != 0 {
+		t.Errorf("enrich must not emit findings of its own, got %d", got)
 	}
-	if len(resp.GetFindings()) != 0 {
-		t.Errorf("expected zero findings when no workspace provided, got %d", len(resp.GetFindings()))
+	if got := len(resp.GetEnrichments()); got != 2 {
+		t.Fatalf("expected one enrichment per known finding, got %d", got)
+	}
+
+	byFP := map[string]*pluginv1.Enrichment{}
+	for _, e := range resp.GetEnrichments() {
+		if e.GetKind() != "threat-intel" {
+			t.Errorf("kind should be threat-intel, got %q", e.GetKind())
+		}
+		byFP[e.GetFindingFingerprint()] = e
+	}
+
+	sqli, ok := byFP["f1"]
+	if !ok {
+		t.Fatal("no enrichment attached to the SQL-injection finding")
+	}
+	if got := sqli.GetMetadata()["owasp_top10"]; got != "A03:2021-Injection" {
+		t.Errorf("CWE-89 should map to A03 Injection, got %q", got)
+	}
+	if sqli.GetMetadata()["remediation"] == "" {
+		t.Error("enrichment must carry remediation guidance")
+	}
+
+	creds, ok := byFP["f2"]
+	if !ok {
+		t.Fatal("no enrichment attached to the hardcoded-credentials finding")
+	}
+	if got := creds.GetMetadata()["attack_technique"]; got != "T1552" {
+		t.Errorf("CWE-798 should map to ATT&CK T1552, got %q", got)
+	}
+}
+
+// A guessed OWASP category is worse than none: it routes the finding to the
+// wrong owner and looks authoritative doing it.
+func TestEnrich_SkipsFindingsItCannotClassify(t *testing.T) {
+	resp := invokeEnrich(t, testClient(t), []*pluginv1.Finding{
+		{Fingerprint: "no-cwe", RuleId: "SOME-001", Message: "something happened"},
+		{Fingerprint: "unknown-cwe", RuleId: "SOME-002", Metadata: map[string]string{"cwe": "CWE-99999"}},
+	})
+
+	if got := len(resp.GetEnrichments()); got != 0 {
+		t.Errorf("expected silence on unclassifiable findings, got %d: %v", got, resp.GetEnrichments())
+	}
+}
+
+func TestEnrich_NoFindingsIsSuccess(t *testing.T) {
+	resp := invokeEnrich(t, testClient(t), nil)
+	if len(resp.GetEnrichments()) != 0 {
+		t.Errorf("a clean scan should produce no enrichments, got %d", len(resp.GetEnrichments()))
+	}
+}
+
+// The `cwe` metadata key is the contract, but not every analyzer sets it.
+// Falling back to the rule ID and message recovers enrichment for those rather
+// than silently skipping them.
+func TestCweFor(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata map[string]string
+		ruleID   string
+		message  string
+		want     string
+	}{
+		{"metadata key", map[string]string{"cwe": "CWE-89"}, "R1", "msg", "CWE-89"},
+		{"uppercase key", map[string]string{"CWE": "CWE-78"}, "R1", "msg", "CWE-78"},
+		{"cwe_id key", map[string]string{"cwe_id": "CWE-22"}, "R1", "msg", "CWE-22"},
+		{"embedded in a longer value", map[string]string{"cwe": "CWE-918 (SSRF)"}, "R1", "msg", "CWE-918"},
+		{"from rule id", nil, "GO-CWE-502-DESERIALIZE", "msg", "CWE-502"},
+		{"from message", nil, "R1", "possible CWE-327 weak hash", "CWE-327"},
+		{"metadata wins over message", map[string]string{"cwe": "CWE-89"}, "R1", "mentions CWE-79", "CWE-89"},
+		{"absent", nil, "R1", "no identifier here", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cweFor(tc.metadata, tc.ruleID, tc.message); got != tc.want {
+				t.Errorf("cweFor() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The table is the plugin's entire value. An entry missing its remediation or
+// pointing at no taxonomy at all enriches nothing, so guard the shape.
+func TestCweIntelTableIsWellFormed(t *testing.T) {
+	for cwe, info := range cweIntel {
+		if !strings.HasPrefix(cwe, "CWE-") {
+			t.Errorf("key %q is not a CWE identifier", cwe)
+		}
+		if info.Name == "" {
+			t.Errorf("%s has no weakness name", cwe)
+		}
+		if info.Remediation == "" {
+			t.Errorf("%s has no remediation guidance", cwe)
+		}
+		if info.OWASP == "" && info.OWASPASI == "" && info.ATTACK == "" {
+			t.Errorf("%s maps to no taxonomy at all, so it enriches nothing", cwe)
+		}
+	}
+}
+
+// The table exists to cover what nox core actually emits. These are the CWEs
+// behind its highest-volume rule families; a regression that drops one turns
+// enrichment off for a large share of real findings without failing anything
+// else.
+func TestCweIntelCoversNoxCoreHighVolumeCWEs(t *testing.T) {
+	for _, cwe := range []string{
+		"CWE-798", "CWE-693", "CWE-78", "CWE-22", "CWE-89", "CWE-918",
+		"CWE-284", "CWE-95", "CWE-79", "CWE-250", "CWE-502", "CWE-829", "CWE-77",
+	} {
+		if _, ok := cweIntel[cwe]; !ok {
+			t.Errorf("%s is emitted by nox core but has no enrichment entry", cwe)
+		}
 	}
 }
 
 // --- helpers ---
 
-func testdataDir(t *testing.T) string {
-	t.Helper()
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to determine test file path")
+func findingWithCWE(fp, cwe string) *pluginv1.Finding {
+	return &pluginv1.Finding{
+		Id:          fp,
+		RuleId:      "CORE-001",
+		Severity:    pluginv1.Severity_SEVERITY_HIGH,
+		Confidence:  pluginv1.Confidence_CONFIDENCE_HIGH,
+		Fingerprint: fp,
+		Message:     "example finding",
+		Metadata:    map[string]string{"cwe": cwe},
+		Location:    &pluginv1.Location{FilePath: "internal/api/handler.go", StartLine: 42},
 	}
-	return filepath.Join(filepath.Dir(filename), "testdata")
 }
 
 func testClient(t *testing.T) pluginv1.PluginServiceClient {
 	t.Helper()
-	const bufSize = 1024 * 1024
-
-	lis := bufconn.Listen(bufSize)
+	lis := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
 	pluginv1.RegisterPluginServiceServer(grpcServer, buildServer())
-
 	go func() { _ = grpcServer.Serve(lis) }()
 	t.Cleanup(func() { grpcServer.Stop() })
 
-	conn, err := grpc.NewClient(
-		"passthrough:///bufconn",
+	conn, err := grpc.NewClient("passthrough:///bufconn",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return lis.DialContext(ctx)
 		}),
@@ -246,31 +187,16 @@ func testClient(t *testing.T) pluginv1.PluginServiceClient {
 	return pluginv1.NewPluginServiceClient(conn)
 }
 
-func invokeScan(t *testing.T, client pluginv1.PluginServiceClient, workspaceRoot string) *pluginv1.InvokeToolResponse {
+// invokeEnrich calls the tool the way nox's post-scan host does: findings
+// arrive in ScanContext, not in Input.
+func invokeEnrich(t *testing.T, client pluginv1.PluginServiceClient, findings []*pluginv1.Finding) *pluginv1.InvokeToolResponse {
 	t.Helper()
-	input, err := structpb.NewStruct(map[string]any{
-		"workspace_root": workspaceRoot,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	resp, err := client.InvokeTool(context.Background(), &pluginv1.InvokeToolRequest{
-		ToolName: "scan",
-		Input:    input,
+		ToolName:    "enrich",
+		ScanContext: &pluginv1.ScanContext{Findings: findings},
 	})
 	if err != nil {
-		t.Fatalf("InvokeTool(scan): %v", err)
+		t.Fatalf("InvokeTool(enrich): %v", err)
 	}
 	return resp
-}
-
-func findByRule(findings []*pluginv1.Finding, ruleID string) []*pluginv1.Finding {
-	var result []*pluginv1.Finding
-	for _, f := range findings {
-		if f.GetRuleId() == ruleID {
-			result = append(result, f)
-		}
-	}
-	return result
 }

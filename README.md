@@ -1,160 +1,69 @@
 # nox-plugin-threat-enrich
 
-**Threat intelligence enrichment with CWE, OWASP Top 10, and MITRE ATT&CK metadata.**
+**Attaches CWE, OWASP Top 10 and MITRE ATT&CK context to the findings a nox scan produced.**
 
 ## Overview
 
-`nox-plugin-threat-enrich` is a Nox security scanner plugin that enriches security findings with threat intelligence context. It detects vulnerability patterns in source code and annotates each finding with the relevant CWE identifier, OWASP Top 10 2021 category, MITRE ATT&CK technique ID, and actionable remediation guidance -- all in a single scan pass.
+`nox-plugin-threat-enrich` runs *after* a nox scan. It reads each finding's CWE and attaches the threat-intelligence context for that weakness: where it sits in the OWASP Top 10, which MITRE ATT&CK technique an attacker exercising it would be using, and what to do about it.
 
-Security findings without context are noise. A raw "SQL injection detected" finding tells a developer something is wrong but leaves the compliance team, the threat intelligence analyst, and the incident responder without the information they need. This plugin bridges that gap by mapping every detected pattern to the taxonomies that security teams actually use: CWE for vulnerability classification, OWASP Top 10 for web application risk categorization, and MITRE ATT&CK for adversary technique mapping.
+Findings tell you what is wrong. Enrichment tells you what *kind* of wrong it is — which is what compliance mapping, risk scoring and routing all need. A `CWE-89` finding is `A03:2021-Injection` for the auditor and "use parameterized queries" for the engineer, and neither is something the detector itself should have to say.
 
-The plugin scans Go, Python, JavaScript, and TypeScript source files across four enrichment categories. It operates in passive read-only mode, produces deterministic results, and requires no external threat intelligence feeds or API calls.
+The plugin emits **enrichments keyed by finding fingerprint, never findings of its own**. Installing it does not change how many findings a scan reports.
+
+All mappings are static and offline — no threat-intelligence feed is queried, and the same CWE always yields the same context.
+
+> **Changed in 0.3.0.** Earlier versions ran their own regex sweep over the source tree and emitted `ENRICH-001`–`ENRICH-004` findings. That was self-defeating: a plugin whose purpose is to *enrich findings* was re-detecting vulnerabilities in order to have something of its own to attach metadata to — duplicating the core scanner at far worse precision, and leaving core's real findings un-enriched. The `scan` tool is gone; the tool is now `enrich`. See [CHANGELOG.md](CHANGELOG.md) for the migration.
 
 ## Use Cases
 
-### Unified Vulnerability Taxonomy for Compliance Reporting
+### Unified vulnerability taxonomy for compliance reporting
 
-Your security team needs to report findings using CWE identifiers for NIST compliance, OWASP categories for PCI DSS, and ATT&CK techniques for threat-informed defense. The plugin produces findings enriched with all three taxonomies simultaneously, eliminating manual cross-referencing and accelerating compliance reporting.
+Auditors ask for OWASP and CWE coverage, not rule IDs. Enrichment maps every finding onto both taxonomies so a report can be generated from scan output directly.
 
-### Threat-Informed Development
+### Threat-informed development
 
-Your development team wants to understand not just what vulnerabilities exist, but how adversaries exploit them. Each finding includes the MITRE ATT&CK technique ID (e.g., T1059 for command injection, T1110 for credential access), connecting code-level patterns to real-world attack campaigns and helping developers understand the threat landscape.
+ATT&CK technique IDs connect a code-level finding to the attacker behaviour it enables, which is the vocabulary detection and response teams already use.
 
-### Automated Security Metrics Dashboards
+### Automated security metrics dashboards
 
-Your CISO needs a dashboard that shows vulnerability distribution by OWASP Top 10 category and CWE class. The plugin produces structured findings with consistent metadata fields that feed directly into SIEM tools, security dashboards, and GRC platforms without manual enrichment.
+Consistent OWASP categories make trending possible across repositories and languages — "A03 findings across the estate" rather than per-scanner rule counts.
 
-### Multi-Framework Risk Assessment
+### Multi-framework risk assessment
 
-Your organization operates under multiple compliance frameworks that reference different vulnerability taxonomies. The plugin maps each finding to CWE, OWASP, and ATT&CK simultaneously, so a single scan satisfies the reporting requirements of NIST 800-53, OWASP ASVS, PCI DSS, and MITRE-based threat models.
+One finding carries CWE, OWASP Top 10, OWASP Agentic Security (where applicable) and ATT&CK simultaneously, so different consumers can each read the framework they care about.
 
-## 5-Minute Demo
+## What it attaches
 
-### Prerequisites
+One enrichment per finding whose CWE the plugin recognises:
 
-- Go 1.25+
-- [Nox](https://github.com/Nox-HQ/nox) installed
+| Field | Value |
+|---|---|
+| `kind` | `threat-intel` |
+| `finding_fingerprint` | the fingerprint of the finding being enriched |
+| `title` | `CWE-89: SQL Injection` |
+| `body` | markdown: weakness, taxonomy mappings, remediation |
+| `metadata.cwe` | `CWE-89` |
+| `metadata.weakness` | `SQL Injection` |
+| `metadata.owasp_top10` | `A03:2021-Injection` (omitted when unmapped) |
+| `metadata.owasp_asi` | OWASP Agentic Security category, for AI/agent weaknesses |
+| `metadata.attack_technique` | `T1059` (omitted when unmapped) |
+| `metadata.remediation` | actionable fix guidance |
 
-### Quick Start
+The CWE is read from `metadata["cwe"]`, which nox core sets. Where an analyzer does not set it, the plugin falls back to a `CWE-nnn` identifier in the rule ID or message rather than skipping the finding.
 
-1. **Install the plugin**
+**Findings with no CWE, or with a CWE the table does not cover, are passed over in silence.** A guessed OWASP category is worse than none: it routes the finding to the wrong owner and looks authoritative doing it.
 
-   ```bash
-   nox plugin install Nox-HQ/nox-plugin-threat-enrich
-   ```
+## Coverage
 
-2. **Create test files with enrichable patterns**
-
-   ```bash
-   mkdir -p demo-enrich && cd demo-enrich
-
-   cat > app.py <<'EOF'
-   import hashlib
-   import subprocess
-   from flask import Flask, request
-
-   app = Flask(__name__)
-
-   @app.route("/search")
-   def search():
-       term = request.args["q"]
-       cursor = app.db.cursor()
-       cursor.execute("SELECT * FROM items WHERE name = '%s'" % term)
-       return cursor.fetchall()
-
-   @app.route("/hash")
-   def hash_password():
-       pwd = request.form["password"]
-       return hashlib.md5(pwd.encode()).hexdigest()
-
-   @app.route("/run")
-   def execute():
-       cmd = request.args["cmd"]
-       subprocess.call(cmd, shell=True)
-
-   api_key = "sk-prod-a1b2c3d4e5f6g7h8i9j0"
-   EOF
-   ```
-
-3. **Run the scan**
-
-   ```bash
-   nox scan --plugin nox/threat-enrich demo-enrich/
-   ```
-
-4. **Review findings**
-
-   ```
-   nox/threat-enrich scan completed: 4 findings
-
-   ENRICH-001 [HIGH] CWE-categorizable vulnerability: SQL Injection:
-       cursor.execute("SELECT * FROM items WHERE name = '%s'" % term)
-     Location: demo-enrich/app.py:11
-     CWE: CWE-89
-     OWASP: A03:2021-Injection
-     Remediation: Use parameterized queries or prepared statements instead of string concatenation
-
-   ENRICH-002 [MEDIUM] OWASP A02:2021 Cryptographic Failures pattern:
-       return hashlib.md5(pwd.encode()).hexdigest()
-     Location: demo-enrich/app.py:17
-     CWE: CWE-327
-     OWASP: A02:2021-Cryptographic Failures
-     Remediation: Use strong, modern cryptographic algorithms (AES-256, SHA-256+); avoid MD5, SHA1, DES, RC4
-
-   ENRICH-001 [HIGH] CWE-categorizable vulnerability: Command Injection:
-       subprocess.call(cmd, shell=True)
-     Location: demo-enrich/app.py:21
-     CWE: CWE-78
-     OWASP: A03:2021-Injection
-     ATT&CK: T1059
-     Remediation: Avoid shell execution with user input; use safe command APIs with argument arrays
-
-   ENRICH-004 [LOW] Common vulnerability pattern: Hardcoded Secret:
-       api_key = "sk-prod-a1b2c3d4e5f6g7h8i9j0"
-     Location: demo-enrich/app.py:23
-     CWE: CWE-798
-     OWASP: A07:2021-Identification and Authentication Failures
-     ATT&CK: T1552
-     Remediation: Use environment variables or a secrets manager; never embed secrets in source code
-   ```
-
-## Rules
-
-| Rule ID    | Description | Severity | Confidence | CWE | OWASP Top 10 | ATT&CK |
-|------------|-------------|----------|------------|-----|-------------|--------|
-| ENRICH-001 | CWE-categorizable vulnerability: SQL Injection | High | High | CWE-89 | A03:2021-Injection | -- |
-| ENRICH-001 | CWE-categorizable vulnerability: Cross-Site Scripting | High | High | CWE-79 | A07:2021-XSS | -- |
-| ENRICH-001 | CWE-categorizable vulnerability: Command Injection | High | High | CWE-78 | A03:2021-Injection | T1059 |
-| ENRICH-002 | OWASP A01:2021 Broken Access Control pattern | Medium | Medium | CWE-284 | A01:2021-Broken Access Control | -- |
-| ENRICH-002 | OWASP A02:2021 Cryptographic Failures pattern | Medium | Medium | CWE-327 | A02:2021-Cryptographic Failures | -- |
-| ENRICH-003 | ATT&CK Credential Access technique (T1110) | Medium | High | CWE-522 | A07:2021 | T1110 |
-| ENRICH-003 | ATT&CK Discovery technique: File and Directory Discovery (T1083) | Medium | High | CWE-200 | -- | T1083 |
-| ENRICH-003 | ATT&CK Execution technique: Command and Scripting Interpreter (T1059) | Medium | High | CWE-78 | A03:2021-Injection | T1059 |
-| ENRICH-004 | Common vulnerability: Insecure Deserialization | Low | Medium | CWE-502 | A08:2021 | -- |
-| ENRICH-004 | Common vulnerability: Hardcoded Secret | Low | Medium | CWE-798 | A07:2021 | T1552 |
-
-## Supported Languages / File Types
-
-| Language | Extensions |
-|----------|-----------|
-| Go | `.go` |
-| Python | `.py` |
-| JavaScript | `.js` |
-| TypeScript | `.ts` |
+The table covers 60+ CWEs, chosen to cover what nox core actually emits — including its highest-volume families (`CWE-798`, `CWE-693`, `CWE-78`, `CWE-22`, `CWE-89`, `CWE-918`, `CWE-284`, `CWE-95`, `CWE-79`). A test asserts those stay covered, since a regression there would silently switch enrichment off for a large share of real findings.
 
 ## Configuration
 
-The plugin operates with sensible defaults and requires no configuration. It scans the entire workspace recursively, skipping `.git`, `vendor`, `node_modules`, `__pycache__`, and `.venv` directories.
-
-Pass `workspace_root` as input to override the default scan directory:
-
-```bash
-nox scan --plugin nox/threat-enrich --input workspace_root=/path/to/project
-```
+None required. The plugin receives findings from nox's post-scan phase; it does not read the source tree and takes no scan path.
 
 ## Installation
 
-### Via Nox (recommended)
+### Via nox (recommended)
 
 ```bash
 nox plugin install Nox-HQ/nox-plugin-threat-enrich
@@ -171,41 +80,29 @@ make build
 ## Development
 
 ```bash
-# Build the plugin binary
-make build
+make build   # build the plugin binary
+make test    # run tests with race detection
+make lint    # run the linter
+make clean   # clean build artifacts
 
-# Run tests with race detection
-make test
-
-# Run linter
-make lint
-
-# Clean build artifacts
-make clean
-
-# Build Docker image
 docker build -t nox-plugin-threat-enrich .
 ```
 
 ## Architecture
 
-The plugin follows the standard Nox plugin architecture, communicating via the Nox Plugin SDK over stdio.
+The plugin speaks the nox Plugin SDK over stdio and declares a single tool, `enrich`, with `requires_scan_context: true`.
 
-1. **File Discovery**: Recursively walks the workspace, filtering for supported source file extensions (`.go`, `.py`, `.js`, `.ts`).
+1. **Post-scan invocation.** nox completes its scan, then hands the plugin a `ScanContext` carrying the findings it produced. The plugin never walks the workspace.
 
-2. **Pattern Matching with Enrichment**: Each source file is scanned line by line. When a pattern matches, the finding is emitted with the full enrichment metadata from the rule definition:
-   - `cwe` -- CWE identifier (e.g., CWE-89)
-   - `owasp_top10` -- OWASP Top 10 2021 category (e.g., A03:2021-Injection)
-   - `mitre_attack` -- MITRE ATT&CK technique ID (e.g., T1059)
-   - `remediation` -- Actionable fix guidance
+2. **CWE resolution.** Each finding's CWE is read from `metadata["cwe"]`, falling back to a `CWE-nnn` identifier in the rule ID or message.
 
-3. **Multi-Taxonomy Rules**: Each rule carries all applicable taxonomy mappings. A command injection pattern maps simultaneously to CWE-78, OWASP A03:2021-Injection, and ATT&CK T1059. This is not a separate enrichment step -- the mappings are baked into the rule definitions.
+3. **Static taxonomy mapping.** The CWE is looked up in a static table carrying the OWASP category, ATT&CK technique and remediation guidance. No network access, no feeds, fully deterministic.
 
-4. **Deterministic Output**: All analysis uses pre-compiled regex patterns with static enrichment metadata. No external threat intelligence feeds are queried.
+4. **Enrichment output.** Context is emitted as enrichments linked to findings by fingerprint. Nothing is added to the finding set, so the scan's finding count is independent of whether enrichment ran.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue or submit a pull request on the [GitHub repository](https://github.com/Nox-HQ/nox-plugin-threat-enrich).
+Contributions welcome — open an issue or a pull request on the [GitHub repository](https://github.com/Nox-HQ/nox-plugin-threat-enrich).
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
