@@ -2,7 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## 0.2.0
+## 0.2.3 - 2026-08-02
+
+- fix: stop flagging prose and documentation placeholders. The rules matched
+  their patterns anywhere in a file, so comments, README prose and placeholder
+  literals were reported as findings. Enrichment now requires the match to sit
+  in code.
+- chore(deps): nox SDK and the CI action pin both move to v1.26.0, so the
+  plugin builds against the same nox that scans it.
+
+## 0.2.2 - 2026-07-20
+
+- chore(deps): nox SDK v1.13.0 (loopback bind + gRPC token auth), grpc 1.82.1.
+
+## 0.2.1 - 2026-07-05
 
 - fix(ENRICH-001): SQL-injection patterns no longer fire on safe code. The go
   pattern requires a DB method (`Query`/`Exec`/...) with concatenation instead
@@ -21,6 +34,8 @@ All notable changes to this project will be documented in this file.
 - feat: per-rule mitigation patterns to suppress known-safe variants.
 - test: add `testdata/clean/` negative fixtures (all 4 languages) and
   `TestCleanCodeNoFindings` asserting safe code produces zero findings.
+
+## 0.2.0
 
 - chore: add CI/CD, lint config, pre-commit hooks, and fix lint issues
 - chore: add LICENSE, .gitignore, and tidy go.mod
