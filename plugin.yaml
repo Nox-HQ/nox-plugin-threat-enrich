@@ -1,7 +1,11 @@
 name: nox-plugin-threat-enrich
-version: 0.2.0
+version: 0.3.0
 track: intelligence
-description: Threat intelligence enrichment with CWE, OWASP Top 10, and MITRE ATT&CK metadata
+description: Attaches CWE, OWASP Top 10 and MITRE ATT&CK context to the findings a scan produced
 tools:
-  - name: scan
-    description: Scan source files and enrich findings with CWE, OWASP Top 10, and MITRE ATT&CK metadata
+  # Post-scan: nox hands this tool the completed scan's findings and it attaches
+  # threat-intelligence context keyed on each finding's CWE. It emits
+  # enrichments keyed by finding fingerprint, never findings of its own.
+  - name: enrich
+    description: Attach OWASP, MITRE ATT&CK and remediation context to each finding from the completed scan
+    requires_scan_context: true
