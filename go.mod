@@ -3,7 +3,7 @@ module github.com/nox-hq/nox-plugin-threat-enrich
 go 1.26.5
 
 require (
-	github.com/nox-hq/nox v1.36.0
+	github.com/nox-hq/nox v1.39.2
 	google.golang.org/grpc v1.84.0
 )
 
