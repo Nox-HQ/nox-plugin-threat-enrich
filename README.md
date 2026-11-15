@@ -1,5 +1,7 @@
 # nox-plugin-threat-enrich
 
+[![nox security grade](.github/nox-badge.svg)](https://github.com/nox-hq/nox)
+
 **Attaches CWE, OWASP Top 10 and MITRE ATT&CK context to the findings a nox scan produced.**
 
 ## Overview
